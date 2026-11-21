@@ -18,11 +18,13 @@
   <link rel="stylesheet" href="/nav/nav.css?v=2475">
   <link rel="stylesheet" href="../assets/scramble/scramble.css?v=1892">
   <link rel="stylesheet" href="../assets/state-reset/state-reset.css?v=1949">
-  <link rel="stylesheet" href="./analyzer.css?v=2623">
+  <!-- 魔方展开图（Cube 公用 /Cube/assets/cube-net/），与 Cross、Trainer 共用同一份 -->
+  <link rel="stylesheet" href="../assets/cube-net/cube-net.css?v=2664">
+  <link rel="stylesheet" href="./analyzer.css?v=2712">
 
   <script src="../assets/base/jquery-4.0.0.min.js"></script>
   <script src="../assets/base/compat.js?v=1877" defer></script>
-  <script src="/nav/nav.js?v=2593" defer></script>
+  <script src="/nav/nav.js?v=2712" defer></script>
   <script src="/assets/services/core/site-scope.js?v=2255" defer></script>
   <script src="/assets/services/core/storage-manager.js?v=1892" defer></script>
   <script src="../../assets/vendor/supabase/supabase.min.js" defer></script>
@@ -56,9 +58,14 @@
   <script src="../assets/cube-3d/twistynnn.js?v=2450" defer></script>
 
   <script src="./analyzer-core.js?v=1877" defer></script>
+  <!-- 魔方展开图（Cube 公用 /Cube/assets/cube-net/）。必须排在 analyzer-app.js 之前：
+       状态图在 init 里就要用到 window.CubeNet。 -->
+  <script src="../assets/cube-net/cube-net.js?v=2664" defer></script>
   <script src="./analyzer-import.js?v=2063" defer></script>
   <script src="./analyzer-charts.js?v=1877" defer></script>
-  <script src="./smartcube-bridge.js?v=1927" defer></script>
+  <!-- 智能魔方蓝牙桥：Cube 公用（/Cube/assets/bluetooth/smartcube-bridge.js），
+       与 Cross / Trainer 共用同一份。对外仍是 window.CubeAnalyzerSmartCube。 -->
+  <script src="../assets/bluetooth/smartcube-bridge.js?v=2683" defer></script>
   <script src="./solve-analyzer.js?v=1877" defer></script>
   <script src="/assets/services/sync/payload-codec.js?v=1892" defer></script>
   <script src="./analyzer-store.js?v=2579" defer></script>
@@ -68,7 +75,7 @@
   <script src="./analyzer-quality.js?v=2005" defer></script>
   <script src="./analyzer-ai.js?v=2005" defer></script>
   <script src="./analyzer-replay.js?v=2083" defer></script>
-  <script src="./analyzer-app.js?v=2623" defer></script>
+  <script src="./analyzer-app.js?v=2712" defer></script>
 </head>
 <body data-workspace="training">
   <div class="page-shell">
@@ -109,7 +116,7 @@
           <button class="icon-btn" id="closeSettingsBtn" type="button" aria-label="关闭设置">×</button>
         </div>
         <label class="settings-row">
-          <span class="settings-text">自由打乱<em>不按公式，自己随便拧；公式由转动记录实时反算</em></span>
+          <span class="settings-text">自由打乱<em>不按公式，自己随便拧；公式由转动记录实时反算，魔方不必先复原</em></span>
           <input id="freeScrambleToggle" type="checkbox">
         </label>
         <label class="settings-row">
@@ -142,10 +149,13 @@
             <div class="scramble-head">
               <span class="section-kicker">打乱</span>
               <span class="scramble-hint" id="scrambleHint">双击公式换一条</span>
-              <button class="text-btn" id="freeScrambleDoneBtn" type="button" hidden>打乱完成</button>
             </div>
             <div class="scramble-tape">
               <div class="scramble-text" id="scrambleText"></div>
+            </div>
+            <!-- 自由打乱时，打乱区下面出现「结束打乱」：点它即进入可计时状态，公式反算在后台进行 -->
+            <div class="scramble-finish">
+              <button class="btn btn-primary" id="freeScrambleDoneBtn" type="button" hidden>结束打乱</button>
             </div>
             <div class="scramble-meta" id="scrambleMeta"></div>
 
@@ -159,6 +169,18 @@
               <div class="timer-actions">
                 <button class="btn btn-primary ready-btn" id="readyBtn" type="button" hidden>开始</button>
                 <button class="btn btn-ghost" id="cancelTimerBtn" type="button" disabled>取消本把</button>
+                <!-- 状态图（飞机图）：与 Cross 同一套交互 —— 点开在按钮旁弹出六面展开图。
+                     展开图本体与配色换算都是 Cube 公用件 /Cube/assets/cube-net/，这里只挂宿主 div。 -->
+                <div class="cubePopWrap" id="cubeNetWrap">
+                  <button class="btn btn-ghost" id="cubeNetBtn" type="button" aria-expanded="false" aria-controls="cubeNetPop" aria-haspopup="dialog" title="查看当前魔方状态（六面展开图）">状态图</button>
+                  <div class="cubePop" id="cubeNetPop" role="dialog" aria-label="魔方状态">
+                    <div class="cubePopHead">
+                      <span id="cubeNetTitle">魔方状态</span>
+                      <span class="cubeHint" id="cubeNetHint">未连接</span>
+                    </div>
+                    <div class="cubeNet" id="cubeNet" aria-label="魔方六面展开图"></div>
+                  </div>
+                </div>
               </div>
             </div>
             <div class="keyboard-hint" id="keyboardHint"><kbd>Space</kbd> 起停；若不按 Space 而直接转动，本把将全程使用状态计时</div>
@@ -188,6 +210,12 @@
                 <div><span>Turns</span><strong id="liveTurns">0</strong></div>
                 <div><span>Fluency</span><strong id="liveFluency">—</strong></div>
                 <div><span>PB</span><strong id="liveBest">—</strong></div>
+              </div>
+              <!-- 四宫格下方：修正本 Session 最新一把（DNF / +2 / 删除） -->
+              <div class="live-actions" id="liveActions" role="group" aria-label="修正最新一把">
+                <button class="live-action" id="liveDnfBtn" type="button" data-live-penalty="dnf" aria-pressed="false" title="把本 Session 最新一把标记为 DNF">DNF</button>
+                <button class="live-action" id="livePlusTwoBtn" type="button" data-live-penalty="plus_two" aria-pressed="false" title="给本 Session 最新一把加 2 秒">+2</button>
+                <button class="live-action danger" id="liveDeleteBtn" type="button" data-live-delete="1" title="删除本 Session 最新一把（需确认）">删除</button>
               </div>
               <div class="move-stream" id="moveStream"><span class="muted">动作会显示在这里</span></div>
 
